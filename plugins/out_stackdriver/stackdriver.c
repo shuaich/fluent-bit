@@ -1476,15 +1476,16 @@ static insert_id_status validate_insert_id(msgpack_object * insert_id_value,
     return ret;
 }
 
-static int pack_json_payload(int insert_id_extracted,
-                             int operation_extracted, int operation_extra_size,
-                             int source_location_extracted,
-                             int source_location_extra_size,
-                             int http_request_extracted,
-                             int http_request_extra_size,
-                             timestamp_status tms_status,
-                             msgpack_packer *mp_pck, msgpack_object *obj,
-                             struct flb_stackdriver *ctx)
+static int pack_payload(int insert_id_extracted,
+                        int operation_extracted,
+                        int operation_extra_size,
+                        int source_location_extracted,
+                        int source_location_extra_size,
+                        int http_request_extracted,
+                        int http_request_extra_size,
+                        timestamp_status tms_status,
+                        msgpack_packer *mp_pck, msgpack_object *obj,
+                        struct flb_stackdriver *ctx)
 {
     /* Specified fields include local_resource_id, operation, sourceLocation ... */
     int i, j;
@@ -1565,6 +1566,34 @@ static int pack_json_payload(int insert_id_extracted,
 
     new_map_size = map_size - to_remove;
 
+    flb_plg_info(ctx->ins, "new_map_size is: %d", new_map_size);
+    flb_sds_t text_payload;
+    bool is_string_text_payload = false;
+    if (ctx->text_payload_key && get_string(&text_payload, obj, ctx->text_payload_key) == 0) {
+        flb_plg_info(ctx->ins, "textPayload key is: %s", ctx->text_payload_key);
+        is_string_text_payload = true;
+    }
+    /* textPayload if text_payload_key is the only residual string field*/
+    if (new_map_size == 1 && is_string_text_payload) {
+        flb_plg_info(ctx->ins, "textPayload is: %s", text_payload);
+
+        msgpack_pack_str(&mp_pck, 11);
+        msgpack_pack_str_body(&mp_pck, "textPayload", 11);
+        int len = flb_sds_len(text_payload);
+        msgpack_pack_str(&mp_pck, len);
+        msgpack_pack_str_body(&mp_pck, text_payload, len);
+
+        flb_sds_destroy(text_payload);
+        return;
+    }
+
+    flb_plg_info(ctx->ins, "pack jsonPayload");
+    /* jsonPayload */
+    msgpack_pack_str(&mp_pck, 11);
+    msgpack_pack_str_body(&mp_pck, "jsonPayload", 11);
+    flb_plg_info(ctx->ins, "free text_payload");
+    flb_sds_destroy(text_payload);
+
     ret = msgpack_pack_map(mp_pck, new_map_size);
     if (ret < 0) {
         goto error;
@@ -1572,7 +1601,7 @@ static int pack_json_payload(int insert_id_extracted,
 
     /* points back to the beginning of map */
     kv = obj->via.map.ptr;
-    for(; kv != kvend; ++kv	) {
+    for(; kv != kvend; ++kv) {
         key_not_found = 1;
 
         /* processing logging.googleapis.com/insertId */
@@ -2432,17 +2461,17 @@ static flb_sds_t stackdriver_format(struct flb_stackdriver *ctx,
         flb_sds_destroy(source_location_function);
         destroy_http_request(&http_request);
 
-        /* jsonPayload */
-        msgpack_pack_str(&mp_pck, 11);
-        msgpack_pack_str_body(&mp_pck, "jsonPayload", 11);
-        pack_json_payload(insert_id_extracted,
-                          operation_extracted, operation_extra_size,
-                          source_location_extracted,
-                          source_location_extra_size,
-                          http_request_extracted,
-                          http_request_extra_size,
-                          tms_status,
-                          &mp_pck, obj, ctx);
+        /* both textPayload and jsonPayload are supported */
+        pack_payload(insert_id_extracted,
+                     operation_extracted,
+                     operation_extra_size,
+                     source_location_extracted,
+                     source_location_extra_size,
+                     http_request_extracted,
+                     http_request_extra_size,
+                     tms_status,
+                     &mp_pck, obj, ctx);
+        flb_plg_info(ctx->ins, "finished packing payload");
 
         /* avoid modifying the original tag */
         newtag = tag;
@@ -3153,6 +3182,11 @@ static struct flb_config_map config_map[] = {
       FLB_CONFIG_MAP_CLIST, "resource_labels", NULL,
       0, FLB_TRUE, offsetof(struct flb_stackdriver, resource_labels),
       "Set the resource labels"
+    },
+    {
+      FLB_CONFIG_MAP_STR, "text_payload_key", (char *)NULL,
+      0, FLB_TRUE, offsetof(struct flb_stackdriver, text_payload_key),
+      "Set key for extracting text payload"
     },
     {
       FLB_CONFIG_MAP_BOOL, "test_log_entry_format", "false",

@@ -271,7 +271,7 @@ struct flb_stackdriver *flb_stackdriver_conf_create(struct flb_output_instance *
     }
     ctx->ins = ins;
     ctx->config = config;
-    
+
     ret = flb_output_config_map_set(ins, (void *)ctx);
     if (ret == -1) {
         flb_plg_error(ins, "unable to load configuration");
@@ -518,6 +518,14 @@ struct flb_stackdriver *flb_stackdriver_conf_create(struct flb_output_instance *
         ctx->tag_prefix_k8s = flb_sds_create(ctx->resource);
         ctx->tag_prefix_k8s = flb_sds_cat(ctx->tag_prefix_k8s, ".", 1);
         ctx->tag_prefix = ctx->tag_prefix_k8s;
+    }
+
+    /* text_payload_key accepts non-empty string */
+    ctx->text_payload_key = NULL;
+    tmp = flb_output_get_property("text_payload_key", ins);
+    if (tmp && tmp[0]) {
+      ctx->text_payload_key = flb_sds_create(tmp);
+      flb_plg_info(ctx->ins, "text_payload_key set to %s", ctx->text_payload_key);
     }
 
     /* Register metrics */
